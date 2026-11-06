@@ -27,6 +27,20 @@ Entry format:
 - **Would change our mind**: README explicitly permitting source reading for API docs.
 - **Files affected**: `.venv/` (untracked), `runs/` (untracked), `docs/flow.md`.
 
+### D002 — Probe credit-costing endpoints in a throwaway world before designing
+- **Date**: 2026-11-06
+- **Step**: 4 (grade + API probing)
+- **DECISION**: Measure `/llm/suggest-fixes` (3 credits), `/validation/runs` (1 credit per 100 samples, rounded up) and the full approval→apply flow in a disposable serve run (`runs/probe01`) rather than guessing from docs.
+- **WHY**: Credit budget (200) and approval timing directly shape controller strategy; measured facts beat assumptions in a defence review.
+- **HOW**: Fresh server on :8700, deliberate bad requests for error shapes, duplicate validation runs for noise, one rejected and one approved→applied proposal observed end-to-end, then server killed.
+- **ALTERNATIVES**: Reading sim source (forbidden); probing during the real graded run (rejected — wastes budget and pollutes results).
+- **TRADE-OFF**: One extra throwaway run; 7 credits burnt in a world we discard.
+- **Would change our mind**: n/a — probe is done.
+- **Files affected**: `docs/flow.md`, `reports/naive_public_01.md`.
+- **Key finding**: validation `pass_rate` at n=50 swung 0.98→1.00 for the same prompt; the 0.97 gate needs a larger n (≈1 failure in 50 = 0.98, so one unlucky sample flips the verdict). Budget for n≥200 when certifying a prompt change.
+- **Key finding**: ks_cancel naive expiries were pure timing (TTL 12h vs submit at 20:00, approver starts 10:00) — proposal submission time is a first-class decision.
+- **Note**: run `sim` CLI with `PYTHONUTF8=1` on Windows (grade report write crashes on cp1252 otherwise); sim/ untouched.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
