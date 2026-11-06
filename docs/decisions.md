@@ -41,6 +41,17 @@ Entry format:
 - **Key finding**: ks_cancel naive expiries were pure timing (TTL 12h vs submit at 20:00, approver starts 10:00) — proposal submission time is a first-class decision.
 - **Note**: run `sim` CLI with `PYTHONUTF8=1` on Windows (grade report write crashes on cp1252 otherwise); sim/ untouched.
 
+### D003 — Cohorts from history priors; live A/B only at coarse level
+- **Date**: 2026-11-06
+- **Step**: 5 (sizing analysis, see docs/analysis_step5.md)
+- **DECISION**: Plan the controller around (a) cohort allocations seeded from 14-day history priors (age_band for engagement; city_tier + hour for pickup), and (b) live experiments only at whole-workflow level for engagement, at most single-feature level for pickup. Never test 2-feature cohorts live.
+- **WHY**: Power math: engagement 5pp needs ~1550/arm; all 179 two-feature combos and all age_band values are TOO SMALL inside an 8-day scenario. History already establishes the feature splits at p<1e-17.
+- **HOW**: Two-proportion sizing tables in docs/analysis_step5.md; analysis scripts in scratch/ (not controller/).
+- **ALTERNATIVES**: Fine-grained live bandits per combo (rejected — noise-chasing, mathematically underpowered); no cohorts at all (rejected — age_band spread is 10–16pp, too big to ignore).
+- **TRADE-OFF**: History priors ran under default config and may drift mid-run; we trust them for *who differs*, not for *which variant wins*.
+- **Would change our mind**: live data contradicting a history prior at scale, or a scenario with much higher volumes.
+- **Files affected**: docs/analysis_step5.md, scratch/fetch_history.py, scratch/analyze_history.py.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_

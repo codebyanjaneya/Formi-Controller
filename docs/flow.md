@@ -40,7 +40,7 @@ Controller modules not built yet, so "Called by" is planned. Observed behaviour 
 
 ### Observed event types (beyond lead/call/campaign_created)
 
-- `approval_decided` — `{approval_id, workflow_id, status: approved|rejected, reasons, ts}`; decision also visible by polling `GET /approvals/{aid}`.
+- `approval_decided` — `{approval_id, workflow_id, status: approved|rejected, reasons, ts}`; verified for BOTH approved and rejected cases (step 5); decision also visible by polling `GET /approvals/{aid}`.
 - `config_changed` — `{workflow_id, version, actor, changed_dims, proposal_id, approval_id, ts}` emitted on apply.
 
 ### Error shapes observed
