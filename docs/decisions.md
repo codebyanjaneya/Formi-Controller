@@ -193,6 +193,12 @@ Entry format:
 - **10× plan**: shard by workflow_id (every table already keyed by it); first bottleneck is the single-threaded tick loop, not memory or storage.
 - **Files affected**: scripts/, tests/, controller/health.py, controller/summary.py, reports/crash_recovery.md, reports/load_public_03.md.
 
+### D021 — Exact guardrail rule, stated and tested
+- **Date**: 2026-11-07
+- **DECISION**: A guardrail "breach" is judged on the winner-vs-champion comparison as: **point-estimate drop exceeds the policy's `max_drop` AND the drop is statistically significant (two-proportion z, two-sided p<0.05)** — OR the point estimate exceeds **2× max_drop** regardless of significance (protection against huge-but-noisy drops). A breach before promotion blocks the promotion but keeps the bounded split (D019). **After promotion**, the 48h decay watch applies the SAME rule continuously to the guardrail metric (winner vs the 20% residual champion); a later breach triggers the standard governance rollback path, exactly like primary-KPI decay. Implemented as `experiments.guardrail_ok()`, covered by `tests/test_guardrail.py` (6 cases: tiny-significant no-block, breach+significant block, noisy-breach no-block, 2× point block, improvement never blocks, real-ztest numbers).
+- **WHY**: The confidence-bound-only version blocked a true +13pp winner on guardrail noise (D019); pure point-estimate would block on every random wiggle past 2pp. The policy's `max_drop` is the law; significance is the evidence standard.
+- **Files affected**: controller/experiments.py (guardrail_ok, _decay_watch), tests/test_guardrail.py.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
