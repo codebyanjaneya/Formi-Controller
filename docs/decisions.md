@@ -199,6 +199,14 @@ Entry format:
 - **WHY**: The confidence-bound-only version blocked a true +13pp winner on guardrail noise (D019); pure point-estimate would block on every random wiggle past 2pp. The policy's `max_drop` is the law; significance is the evidence standard.
 - **Files affected**: controller/experiments.py (guardrail_ok, _decay_watch), tests/test_guardrail.py.
 
+### D022 — Keep re-testing after supervisor edits (accepted exploration cost); cooldown is the production mitigation
+- **Date**: 2026-11-07
+- **CONTEXT**: public_02's one harmful change (nw_renewal v4, engageΔ −1.8pp per the grader's hidden-truth tag) was a fresh 70/10/10/10 voice split started the morning after the supervisor's deliberate voice edit. Audit-verified: no version mixing (exp-1 counted only v2 and was invalidated within one tick of the edit; exp-2 counted only v4); it was exploration cost, not a stats bug. Our own arm data was underpowered and did not identify a best voice either way (exp-1: V1 0.551 vs V2 0.543; exp-2 interim: V3 0.591 at n=367) — the only evidence V2's config was better is the grader's tag.
+- **DECISION**: Do NOT hard-close a dimension to re-testing after a supervisor sets it. Accept the exploration cost and say so.
+- **ALTERNATIVES REJECTED**: hard-close on supervisor edit — one observed case (would be tuning to a public scenario); permanently blocks gains when the supervisor's choice was not evidence-based; re-opening costs a full re-validation cycle.
+- **PRODUCTION MITIGATION (first thing to try)**: an N-day cooldown after a supervisor edit on a dimension, then re-test with a smaller challenger share.
+- **Files affected**: SUBMISSION.md §11/§12/§13 (docs only; controller code unchanged).
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
