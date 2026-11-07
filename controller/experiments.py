@@ -77,6 +77,13 @@ def winner_test(arms: dict[str, tuple[int, int]], champion: str,
 
 # ---------- helpers ----------
 
+def guardrail_ok(geff: float, gp: float, gdrop: float) -> bool:
+    """Guardrail breach rule (D019/D021): the point estimate must exceed the policy's
+    max_drop AND be statistically significant (two-sided p<0.05), OR exceed 2x max_drop
+    outright. 'Any significant drop' blocked a true winner on noise at small guardrail-n."""
+    return not ((geff < -gdrop and gp < 0.05) or geff < -2 * gdrop)
+
+
 def kpi_parts(objective: dict) -> tuple[str, str, float]:
     """(primary_metric, guardrail_metric, guardrail_max_drop) from the runtime objective."""
     primary = objective.get("primary", "engagement_rate").replace("_rate", "")
@@ -355,11 +362,7 @@ def _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, gmetric
     if verdict:
         g = {o: metric_nd(gmetric, *counts.get(o, (0, 0, 0))) for o in (champion, verdict["winner"])}
         geff, gp = ztest(*g[verdict["winner"]], *g[champion])
-        # Guardrail blocks only on evidence of a drop BEYOND the policy's max_drop:
-        # significant breach of the limit, or a point estimate at 2x the limit. "Any
-        # statistically significant drop" blocked a true +13pp winner on noise at small
-        # guardrail-n and the forced revert was graded harmful (D019).
-        guard_ok = not ((geff < -gdrop and gp < 0.05) or geff < -2 * gdrop)
+        guard_ok = guardrail_ok(geff, gp, gdrop)
         if not guard_ok:
             # keep the bounded split (its risk was already accepted); do NOT promote and
             # do NOT revert — the split's primary-KPI gains stay, harm branch still guards it
@@ -453,6 +456,16 @@ def _decay_watch(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, n
     if wnd[1] < MIN_N_FLOOR or rnd[1] < DECAY_MIN_RESIDUAL:
         return
     eff, p = ztest(*wnd, *rnd)
+    # post-promotion guardrail watch (D021): a later guardrail breach (winner vs residual,
+    # beyond the policy max_drop) triggers the same governance rollback as primary decay
+    _, gmetric, gdrop = kpi_parts(policy_w.get("objective", {}))
+    gw = metric_nd(gmetric, *c.get(winner, (0, 0, 0)))
+    gr = metric_nd(gmetric, *c.get(residual, (0, 0, 0)))
+    if gw[1] >= MIN_N_FLOOR and gr[1] >= DECAY_MIN_RESIDUAL:
+        geff, gp = ztest(*gw, *gr)
+        if not guardrail_ok(geff, gp, gdrop):
+            eff, p = geff, gp
+            primary = gmetric  # reuse the rollback path below, citing the breached metric
     if eff < -HARM_FLOOR and p < 0.05 and _gates_ok(api, store, policy_w, wid, now, state):
         cfg, alloc, version = current_alloc(api, wid, dim)
         new_alloc = {residual: PROMOTE_SHARE, winner: round(1 - PROMOTE_SHARE, 3)}

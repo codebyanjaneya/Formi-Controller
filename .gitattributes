@@ -1,0 +1,5 @@
+# Shell scripts must stay LF on every platform or the Linux shebang breaks (found by the
+# fresh-clone test: a Windows checkout gave run.sh CRLF and `env bash\r` failed in Docker).
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
