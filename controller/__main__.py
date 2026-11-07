@@ -38,6 +38,8 @@ def world_check(api: Sim, store: Store) -> dict:
     store.set_meta("scenario", st["scenario"])
     store.set_meta("sim_minute", st["sim_minute"])
     store.set_meta("end_minute", st["end_minute"])  # advance responses don't echo it
+    if store.get_meta("starting_credits") is None:
+        store.set_meta("starting_credits", st.get("credits_remaining", 0))  # 20% reserve base
     store.db.commit()
     return st
 
@@ -77,7 +79,7 @@ def main():
         now = st["ts"]
         store.set_meta("sim_minute", st["sim_minute"])
         events += ingest.ingest_chunks(api, store, ingest.new_chunk_numbers(api, store, st))
-        detect.step(store, now)
+        detect.step(api, store, now, st)
         experiments.step(api, store, now, st)
         govern.act(api, store, now)
         govern.poll_and_apply(api, store, now)

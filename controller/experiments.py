@@ -27,8 +27,8 @@ log = logging.getLogger("experiments")
 
 DIM_COL = {"welcome_message": "welcome", "voice": "voice", "caller_id": "caller_id"}
 CHAMPION_SHARE, PROMOTE_SHARE = 0.7, 0.8
-MAX_CHALLENGERS = 2
 ALPHA = 0.05
+LOOKS = 2  # sequential looks: at min-n(10pp) and min-n(5pp); alpha split across looks (D015)
 MIN_N_FLOOR = 200
 ACTIVE = ("split_proposed", "running", "promote_proposed", "promoted", "rollback_proposed")
 
@@ -218,6 +218,7 @@ def _step_wf(api, store, wid: str, policy_w: dict, now: str, state: dict):
         if status in ("split_proposed", "promote_proposed", "rollback_proposed"):
             _track_proposal(api, store, wid, exp_id, status, notes, now)
         elif status == "running":
+            _extend_versions(api, store, wid, exp_id, dim, notes, now)
             _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary,
                    gmetric, gdrop, now, state)
         elif status == "promoted":
@@ -233,14 +234,16 @@ def _step_wf(api, store, wid: str, policy_w: dict, now: str, state: dict):
     if not alloc:
         alloc = {options[0]: 1.0}
     champion = max(alloc, key=alloc.get)
-    challengers = [o for o in options if o != champion][:MAX_CHALLENGERS]
+    # ALL other options become challengers in ONE proposal: one approval starts the whole
+    # test, and the Bonferroni alpha/k correction already covers the extra comparisons (D015).
+    challengers = [o for o in options if o != champion]
     if not challengers:
         return
-    share = 0.3 / len(challengers)
+    share = 0.3 / len(challengers)  # 30% TOTAL challenger traffic, split evenly
     new_alloc = {champion: CHAMPION_SHARE, **{c: round(share, 3) for c in challengers}}
     rates = recent_option_rates(store, wid, dim, now)
     base_rate = (rates.get(champion, {}) or {}).get(primary) or 0.5
-    min_n = n_per_arm(base_rate, 0.10, ALPHA / len(challengers))
+    min_n = n_per_arm(base_rate, 0.10, ALPHA / (len(challengers) * LOOKS))
     exp_id = f"exp_{wid}_{dim}_{len(store.db.execute('SELECT exp_id FROM experiments WHERE wid=?', (wid,)).fetchall())+1}"
     summary = (f"A/B test on {dim}: keep {champion} at {int(CHAMPION_SHARE*100)}%, "
                f"try {', '.join(challengers)} at {int(share*100)}% each")
@@ -301,16 +304,46 @@ def _track_proposal(api, store, wid, exp_id, status, notes, now):
                 store.audit(now, wid, "experiment_failed", exp_id, {"proposal_status": pstatus})
 
 
+def _extend_versions(api, store, wid, exp_id, dim, notes, now):
+    """A non-supervisor config change on ANOTHER dim (e.g. our caller_id remediation) bumps
+    the version; if the new version preserves this experiment's split, keep counting under it
+    — otherwise the experiment's data would silently stall at the old version."""
+    versions = notes.get("versions", [])
+    if not versions:
+        return
+    latest = store.db.execute("SELECT MAX(version) FROM config_versions WHERE wid=?",
+                              (wid,)).fetchone()[0]
+    if latest is None or latest <= max(versions):
+        return
+    cfg, alloc, version = current_alloc(api, wid, dim)
+    split = notes.get("split_alloc", {})
+    if version > max(versions) and all(abs(alloc.get(o, 0) - w) < 1e-6 for o, w in split.items()):
+        notes["versions"] = versions + list(range(max(versions) + 1, version + 1))
+        with store.db:
+            store.db.execute("UPDATE experiments SET notes=? WHERE exp_id=?",
+                             (json.dumps(notes), exp_id))
+            store.audit(now, wid, "experiment_versions_extended", exp_id,
+                        {"to_version": version})
+
+
 def _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, gmetric, gdrop,
            now, state):
     versions = notes.get("versions") or [notes.get("active_version")]
     counts = arm_counts(store, wid, versions, dim)
     champion, challengers = arms["champion"], arms["challengers"]
     prim = {o: metric_nd(primary, *counts.get(o, (0, 0, 0))) for o in [champion] + challengers}
-    min_n = notes.get("min_n", MIN_N_FLOOR)
-    if any(prim[o][1] < min_n for o in prim):
-        return  # not enough evidence yet; no peeking decisions below min-n
-    verdict = winner_test(prim, champion)
+    cx, cn = prim[champion]
+    base = cx / cn if cn else 0.5
+    k = len(challengers)
+    # Two fixed looks (D015): at min-n for 10pp and at min-n for 5pp. Testing at every tick
+    # would inflate false winners (measured 8-12% in the sequential A/A); fixed looks with
+    # alpha split across looks keep it under the 5% family bound (measured ~2%).
+    look = notes.get("look", 0)
+    threshold = notes.get("min_n", MIN_N_FLOOR) if look == 0 else \
+        n_per_arm(base, 0.05, ALPHA / (k * LOOKS))
+    if any(prim[o][1] < threshold for o in prim):
+        return  # not enough evidence for this look yet
+    verdict = winner_test(prim, champion, alpha=ALPHA / LOOKS)
     if verdict:
         g = {o: metric_nd(gmetric, *counts.get(o, (0, 0, 0))) for o in (champion, verdict["winner"])}
         geff, gp = ztest(*g[verdict["winner"]], *g[champion])
@@ -329,18 +362,23 @@ def _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, gmetric
             _promote(api, store, policy_w, wid, exp_id, dim, arms, notes, verdict,
                      primary, counts, now)
         return
-    # no winner: significant harm, or budget exhausted at the 5pp level -> end + revert
+    # no winner at this look: check for significant harm; else advance to the next look
     harm = None
-    cx, cn = prim[champion]
     for c in challengers:
         x, n = prim[c]
         eff, p = ztest(x, n, cx, cn)
-        if eff < -0.03 and p < ALPHA / len(challengers):
+        if eff < -0.03 and p < ALPHA / (LOOKS * k):
             harm = {"challenger": c, "effect": eff, "p": p}
             break
-    base = cx / cn if cn else 0.5
-    n_5pp = n_per_arm(base, 0.05, ALPHA / len(challengers))
-    exhausted = all(prim[o][1] >= n_5pp for o in prim)
+    if not harm and look == 0:
+        notes["look"] = 1
+        with store.db:
+            store.db.execute("UPDATE experiments SET notes=? WHERE exp_id=?",
+                             (json.dumps(notes), exp_id))
+            store.audit(now, wid, "experiment_look_passed", exp_id,
+                        {"look": 1, "counts": {o: list(prim[o]) for o in prim}})
+        return
+    exhausted = look >= LOOKS - 1
     if harm or exhausted:
         if _gates_ok(api, store, policy_w, wid, now, state):
             with store.db:

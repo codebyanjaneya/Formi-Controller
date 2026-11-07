@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS incidents(
   onset_ts TEXT, detected_ts TEXT, action TEXT, resolved_ts TEXT);
 CREATE TABLE IF NOT EXISTS audit(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, wid TEXT, kind TEXT, ref TEXT, details TEXT);
+CREATE TABLE IF NOT EXISTS detect_state(key TEXT PRIMARY KEY, consec INT, last_alarm TEXT);
+CREATE TABLE IF NOT EXISTS baseline_scale(
+  wid TEXT, metric TEXT, slice TEXT, factor REAL, updated_ts TEXT,
+  PRIMARY KEY(wid, metric, slice));
 """
 
 CALLS_SCHEMA = """

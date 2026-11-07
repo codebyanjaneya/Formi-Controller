@@ -148,6 +148,29 @@ Entry format:
 - **RESULT**: public_01 with the experiment engine: **4 applied changes — 2 beneficial, 2 neutral, 0 harmful**; nw_kyc pickup +17.9% (caller_id experiment promoted D3 at 80/20); overall conclusion rate +6.2%. Voice experiments on nw_renewal/ks_cancel were still mid-flight at scenario end (min_n ≈460/arm at 15% traffic ≈ 3.3 days + approval latency both ways) — engagement headroom stays uncaptured on an 8-day scenario. That is the documented cost of D009 (audible dims via approval) + D007 (no judgement before min-n); on longer hidden scenarios the same machinery finishes.
 - **Files affected**: reports/phaseB_public_01.md.
 
+### D015 — One proposal starts the whole multi-arm test; two-look stopping rule
+- **Date**: 2026-11-07
+- **Step**: Phase C prep
+- **DECISION**: (1) All untested options of a dimension enter ONE experiment as challengers (30% total traffic split evenly; one approval starts everything). (2) Winner judged at exactly two looks (min-n for 10pp, then min-n for 5pp), alpha split across looks and Bonferroni across challengers. (3) Clarified: "challenger share 30%" always meant 30% TOTAL.
+- **WHY**: Sequential A/A replay with the naive every-tick rule showed 9.4–14% false winners (peeking inflates alpha); the two-look rule measured 1.0–4.0%, under the 5% bound. One proposal per test respects max_requests_per_24h and approver fatigue.
+- **ALTERNATIVES**: test-every-tick (rejected: measured inflation); full sequential boundaries like O'Brien-Fleming (rejected: harder to defend, marginal gain over two looks at these n); one challenger at a time (rejected: burns one approval per option).
+- **TRADE-OFF**: with k challengers each gets 30/k% traffic — more options = slower per arm; alpha/(k·looks) needs ~15–20% more n.
+- **Files affected**: controller/experiments.py, scratch/aa_test_sequential.py, tests/test_decay.py.
+
+### D016 — Remediation safety rails + daily baseline level recalibration
+- **Date**: 2026-11-07
+- **Step**: Phase C
+- **DECISION**: (1) Daily recalibration of baseline LEVELS on live data (72h observed/expected, clamp [0.85, 1.15], skip series with open incidents) — history provides only the hourly SHAPE. (2) Caller-id rotation rails: target must be proven healthy (≥200 recent dials, pickup ≥ degraded+3pp); freed weight spread across all healthy options; no rotation of a slice carrying >85% of traffic; ≤8 auto-applies/wid/day; one open rotation per workflow.
+- **WHY**: Measured failures in the first Phase-C run: a chronic ~2–3pp history-vs-live level offset caused daily false pickup alarms on every workflow; and a rotation onto a zero-data caller_id caused a 55-version auto-apply ping-pong storm (D1→D2→D1). Both are now impossible by construction.
+- **ALTERNATIVES**: raising z/effect thresholds globally (rejected: also slows true-incident detection); baselines from live data only (rejected: hidden scenarios can open with an incident, poisoning the baseline).
+- **TRADE-OFF**: a real slow drift smaller than the clamp (≤15% relative) is absorbed over days — accepted; the 24h backstop fires on anything bigger first.
+- **Files affected**: controller/detect.py, controller/store.py (baseline_scale, detect_state tables).
+
+### D017 — Phase C result (public_02)
+- **Date**: 2026-11-07
+- **RESULT**: **7 applied — 5 beneficial, 2 neutral, 0 harmful**; ALL conclusion +5.5%, ks_cancel +14.3%; engagement gap captured 16% overall (ks_cancel 31%); hallucinated calls 152 vs 416 baseline. Caller-ID incident: onset 10:00 → alarm + first auto-rotation 11:00 → rotation complete 11:30; flagged-DID share 0 from the next day. Bad-prompt incident: grader MTTR 315 min (edit 11:30 → halluc alarm + validated proposal 15:30 → applied 16:45; validation P1 pass_rate 0.985, n=200). Supervisor voice edit: detected via event, experiment invalidated, correctly NO counter-action (no KPI effect). Credits used 5/200.
+- **Files affected**: reports/phaseC_public_02.md.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
