@@ -63,6 +63,45 @@ Entry format:
 - **Would change our mind**: a scenario whose history window is unrepresentative (then bootstrap baselines from the first live day(s)).
 - **Files affected**: docs/analysis_step6.md, scratch/observe_run.py, scratch/analyze_probe03.py.
 
+### D005 — One process, one 15-min tick loop; SQLite WAL; Postgres as the written production path
+- **Date**: 2026-11-07
+- **Step**: 8 (design, see docs/design.md §1–3)
+- **DECISION**: Single process, single loop (advance→ingest→detect→decide→act) on the sim's native 15-min tick; all state partitioned by workflow_id; SQLite in WAL mode as the store.
+- **WHY**: The sim is turn-based — WE are the clock, so concurrency buys nothing; partition-by-workflow keeps the shard path open; SQLite = zero ops, one file, real transactions (crash safety needs those).
+- **ALTERNATIVES**: async workers per workflow (rejected: complexity without wall-clock benefit in a turn-based world); Postgres now (rejected: an extra moving part for the grader's 4-vCPU box; kept as the written production path); in-memory + snapshot files (rejected: no atomic cursor+aggregate commit).
+- **TRADE-OFF**: one slow workflow's decision work delays the tick for all; acceptable at ≤12 workflows, and the load test will measure it.
+- **Would change our mind**: load-scenario ingest not keeping up single-threaded.
+- **Files affected**: docs/design.md.
+
+### D006 — Crash safety: deterministic proposal_id + intent log + cursor-with-data transaction
+- **Date**: 2026-11-07
+- **Step**: 8 (design §2–3)
+- **DECISION**: (1) event cursor and aggregates commit in ONE SQLite transaction; (2) every outbound mutation writes an `intents` row BEFORE sending; (3) proposal_id = sha256(wid|base_version|diff|kind) so a resend after crash is the same id; (4) restart reconciles intents against GET /approvals + /config/history.
+- **WHY**: README §5.8 (kill anywhere, resume, never double-apply). The sim's own idempotency (409 duplicate_proposal_id) only protects us if OUR id is stable across crashes — hence deterministic, not random.
+- **ALTERNATIVES**: random UUID + "did I send it?" flag (rejected: flag write and send can't be atomic — the exact crash window we must survive); replaying the sim's events to rebuild intent state (rejected: events don't show proposals that were created but never decided... they do via GET /approvals, but intents also cover auto-apply PUTs and un-sent decisions).
+- **TRADE-OFF**: every decision costs one extra DB write; negligible.
+- **Files affected**: docs/design.md §2–4.
+
+### D007 — Experiments: one dimension at a time, champion/challenger 70/30, Bonferroni winner test
+- **Date**: 2026-11-07
+- **Step**: 8 (design §Experiments)
+- **DECISION**: Max one live experiment per workflow, one dimension at a time; challengers get 20–30% of traffic; judge only after step-5 min-n per arm; winner = two-proportion z-test, α=0.05 Bonferroni-corrected across challengers; guardrail checked before promotion; 24h decay watch after promotion with governance rollback.
+- **WHY**: Step-5 power math (engagement tests only have power at workflow level; 2-D grids need ~4× samples); README §5.4 (deterministic winner, no LLM); naive run showed what 100% flips cost (one harmful change).
+- **ALTERNATIVES**: multi-armed bandit (rejected: continuous reallocation fights mid_flight locks, auto-apply max_shift limits and approval latency — the environment is governance-gated, not a casino); full factorial welcome×voice (rejected: 4× samples, underpowered in short scenarios — interaction risk accepted and documented).
+- **TRADE-OFF**: misses strong interactions; ~15–20% more samples for the correction (≈+1 day on a 5pp test) to keep false-winner rate ≤5%.
+- **Would change our mind**: long scenarios with big volumes (then factorial on the biggest workflow becomes affordable).
+- **Files affected**: docs/design.md §Experiments.
+
+### D008 — Scope: build C1,C2,C5–C10(min),C12,C13,C14(min); cut C3-partial, C4, C11, C15
+- **Date**: 2026-11-07
+- **Step**: 8 (design §Scope)
+- **DECISION**: As per docs/design.md §Scope, with reasons written per item.
+- **WHY**: README §6 explicitly rewards choosing; the floor (public_01+02 end-to-end, audit, constraints) plus the evaluation table (outcomes, statistics, crash safety) points at exactly this set.
+- **ALTERNATIVES**: building C4 call-time optimisation (real headroom, rejected to protect the experiment budget and scope); a UI for C11 (rejected: pure surface area).
+- **TRADE-OFF**: leaves measurable schedule-headroom uncaptured on hidden scenarios.
+- **Would change our mind**: finishing the build early (C4's hour_weights-only version is the first stretch goal).
+- **Files affected**: docs/design.md §Scope.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_

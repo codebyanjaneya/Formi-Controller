@@ -1,21 +1,31 @@
 # Flow map
 
-Living map of the controller system. Everything below is **planned** — no controller code exists yet. Update this file in the same commit as every change.
+Living map of the controller system. Design is frozen in `docs/design.md` (step 8); controller code itself is still **planned**. Update this file in the same commit as every change.
 
-## (a) Event flow diagram — planned
+## (a) Event flow diagram — designed, not yet built
 
 ```mermaid
 flowchart LR
-    A[Events in via HTTP poll] --> B[State in SQLite]
-    B --> C[Decisions / proposals]
-    C --> D[Config changes out via HTTP]
+    A[POST /sim/advance 15m] --> B[ingest: chunks -> agg_calls + leads + cursor, one txn]
+    B --> C[detect: sliced z-detectors + external config_changed watch]
+    C --> D[decide: experiments / remediation -> intent rows]
+    D --> E[act: auto-apply PUT / POST approvals / POST apply]
+    E --> A
 ```
 
-## (b) Modules — planned
+## (b) Modules — designed (design.md §1), not yet built
 
 | Module/File | What it does | Imports / called by |
 |---|---|---|
-| _(planned)_ | | |
+| `controller/__main__.py` | entrypoint, main loop | calls ingest, detect, experiments, govern |
+| `controller/api.py` | httpx client, retries, error mapping | used by all; imports nothing of ours but store-less |
+| `controller/store.py` | SQLite WAL schema + txn helpers | used by all |
+| `controller/policy.py` | runtime policy from GET /workflows | used by detect, experiments, govern |
+| `controller/ingest.py` | chunks → aggregates + cursor (one txn) | called by main |
+| `controller/detect.py` | baselines, rolling detectors, external watch | called by main |
+| `controller/experiments.py` | experiment lifecycle + winner test + decay watch | called by main |
+| `controller/govern.py` | intents, proposals, auto-apply, apply, reconcile | called by main |
+| `run.sh` | venv + `python -m controller <SIM_URL>` | entry |
 
 ## (c) Simulator endpoints — observed via HTTP (step 3, public_01_dev)
 
@@ -55,10 +65,12 @@ Controller modules not built yet, so "Called by" is planned. Observed behaviour 
 
 ks_cancel governance (from API): `proposal_ttl_hours: 12`, `approver_hours: [10,19]`. Naive submitted daily at 20:00 → proposal expires 08:00 next morning, but the approver only starts at 10:00. The approver never saw a single proposal. Fix is trivial: submit during (or shortly before) approver hours. Also: ks_cancel allows **auto-apply on voice/welcome_message/schedule/caller_id with max_shift 0.2** — most changes there don't need approval at all.
 
-## (d) Proposal state machine — planned
+## (d) Proposal state machine — designed (design.md §4)
 
-_(planned)_
+`pending → approved | rejected | expired`; `approved → applied | lapsed`; any non-terminal → `stale` (our local state when the base config version changes under the proposal — rebuild on the new base). We drive create and apply; the world drives approve/reject (approval_decided event), expire (TTL) and lapse (apply_window missed, HTTP 410). Stale is detected proactively from `config_changed` events, or reactively via 409 `stale_base_version`.
 
-## (e) Storage & restart — planned
+## (e) Storage & restart — designed (design.md §2–3)
 
-What is stored where in SQLite and what happens on restart: _(planned)_
+SQLite (WAL), one file. Tables: `meta` (event cursor), `workflows` (policy cache), `config_versions`, `campaigns`, `leads`, `agg_calls` (the shared cohort/aggregate object; keyed by wid, hour, config_version, cohort, variant dims), `baselines`, `experiments`, `intents` (written before every outbound mutation; deterministic proposal_id), `proposals`, `incidents`, `audit`.
+
+Restart: read cursor → reconcile un-acked intents against `GET /approvals` + `/config/history` (resend-safe: same deterministic id → 409 duplicate) → resume loop. Cursor and aggregates commit in one transaction, so a crash can only re-read a whole chunk, never lose or double-count one.
