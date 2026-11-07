@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 
 from .api import ApiError
+from .crashhook import maybe_crash
 from . import policy as pol
 
 log = logging.getLogger("govern")
@@ -42,6 +43,9 @@ def act(api, store, now: str):
         "SELECT proposal_id, wid, kind, payload FROM intents WHERE status='pending_send'").fetchall()
     for pid, wid, kind, payload in rows:
         body = json.loads(payload)
+        maybe_crash("intent_written")  # crash test (a): intent row exists, nothing sent yet
+        if kind == "auto":
+            maybe_crash("auto_pending")  # crash test (d): mid auto-rotation
         try:
             if kind == "approval":
                 r = api.post_approval(body)
@@ -79,8 +83,12 @@ def poll_and_apply(api, store, now: str):
         "SELECT proposal_id, approval_id, wid, status FROM proposals "
         "WHERE status IN ('pending','approved')").fetchall()
     for pid, aid, wid, status in rows:
+        if status == "pending":
+            maybe_crash("proposal_pending")  # crash test (b)
         ap = api.get_approval(aid)
         st = ap["status"]
+        if st == "approved":
+            maybe_crash("approved_before_apply")  # crash test (c)
         if st != status:
             with store.db:
                 store.db.execute("UPDATE proposals SET status=?, reasons=?, decided_ts=? WHERE proposal_id=?",

@@ -99,7 +99,34 @@ def main():
             policy.refresh(api, store, now)
 
     log.info("scenario finished at %s after %d ticks, %d events", now, ticks, events)
+    log.info("peak memory: %s MB", _peak_mem_mb())
     return 0
+
+
+def _peak_mem_mb():
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        class PMC(ctypes.Structure):
+            _fields_ = [("cb", wt.DWORD), ("PageFaultCount", wt.DWORD)] + \
+                [(n, ctypes.c_size_t) for n in (
+                    "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                    "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                    "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentProcess.restype = wt.HANDLE
+        fn = k32.K32GetProcessMemoryInfo
+        fn.argtypes = [wt.HANDLE, ctypes.POINTER(PMC), wt.DWORD]
+        pmc = PMC(cb=ctypes.sizeof(PMC))
+        fn(k32.GetCurrentProcess(), ctypes.byref(pmc), ctypes.sizeof(PMC))
+        return round(pmc.PeakWorkingSetSize / 1e6)
+    except Exception:
+        try:
+            import resource
+            return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
+        except Exception:
+            return "?"
 
 
 if __name__ == "__main__":
