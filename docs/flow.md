@@ -1,8 +1,8 @@
 # Flow map
 
-Living map of the controller system. Design is frozen in `docs/design.md` (step 8); controller code itself is still **planned**. Update this file in the same commit as every change.
+Living map of the controller system. Design is frozen in `docs/design.md` (step 8). **Phase A built**: loop, api, store (state.db + calls.db), ingest (15k events/s on public_03), policy, govern (intents/reconcile), detect (external-watch only), why CLI, run.sh. Experiments engine and z-detectors still stubs (Phase B/C). Update this file in the same commit as every change.
 
-## (a) Event flow diagram — designed, not yet built
+## (a) Event flow diagram — built (Phase A)
 
 ```mermaid
 flowchart LR

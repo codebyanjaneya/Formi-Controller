@@ -117,6 +117,7 @@ Entry format:
 - **DECISION**: As per design.md "Decided questions" — challenger 30% (10pp in 1–2 days per workflow); one retry on judgement-call rejects with new attempt id, counted in max_requests_per_24h; schedule only as soft weights (no 0-weight hours in window) and only if time allows; credit reserve = 20% of starting credits from /sim/state; Python with an early ≥1400 events/sec ingest benchmark on public_03 (batch per chunk).
 - **ALTERNATIVES**: 20% challenger (slower learning in short scenarios); unlimited retries (approver fatigue + request-cap burn); fixed 40-credit reserve (wrong on hidden budgets); zeroing bad hours in schedule (silently wastes capacity per SIMULATOR.md).
 - **Files affected**: docs/design.md §Decided questions.
+- **RESULT (Phase A)**: ingest benchmark on public_03 history (~5.5M events): **15,053 events/s** full path (fetch+parse+aggregate+calls.db+state txn) — 10× the 1400/s gate. Python confirmed.
 
 ### D011 — calls.db per-call record + `heard` CLI; client-preferences caution layer
 - **Date**: 2026-11-07
