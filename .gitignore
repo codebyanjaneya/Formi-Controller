@@ -8,3 +8,4 @@ scratch/probe03_history.ndjson
 scratch/probe03_live.ndjson
 scratch/probe03_analysis.md
 state/
+state_crash/

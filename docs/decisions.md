@@ -187,6 +187,12 @@ Entry format:
 - **ALTERNATIVES**: keeping strict any-significant-drop blocking (rejected: measured false block); promoting winners despite guardrail signal (rejected: policy limit is law).
 - **Files affected**: controller/experiments.py, reports/phaseD_public_01.md.
 
+### D020 — Phase D results: crash safety demonstrated, load target beaten 7×
+- **Date**: 2026-11-07
+- **RESULT**: (1) Crash test (scripts/crash_test.sh): one public_02 world, kill -9 at 5 distinct moments (intent written/unsent, proposal pending, approved-not-applied, mid auto-rotation, random) + restart each time → run completes, **11/11 invariants pass** (no double apply, no lost approval, cursor exact, state.db==calls.db, no unhandled duplicates). (2) Load test (reports/load_public_03.md): full controller in a 4-vCPU/8GB python:3.11 Linux container — **~1.3 min per simulated day** (target <10), ~11.3k events/s end-to-end, peak 801 MB, 32 governance actions across all 12 workflows. (3) 15 unit tests green (ids, winner stats, state machine, ingest idempotency, decay rollback). (4) `controller.health` + `controller.summary` CLIs are the C14/C11 minimal surfaces.
+- **10× plan**: shard by workflow_id (every table already keyed by it); first bottleneck is the single-threaded tick loop, not memory or storage.
+- **Files affected**: scripts/, tests/, controller/health.py, controller/summary.py, reports/crash_recovery.md, reports/load_public_03.md.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
