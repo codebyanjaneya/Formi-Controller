@@ -128,6 +128,26 @@ Entry format:
 - **TRADE-OFF**: ~60–80 MB/day on the load scenario + one more batched insert per chunk.
 - **Files affected**: docs/design.md §2 (calls.db), §Client preferences layer.
 
+### D012 — Pre-Phase-B checks: strict new-world detection; governance round-trip verified
+- **Date**: 2026-11-07
+- **Step**: Phase B prep
+- **RESULTS**: (1) New-world detection = scenario name change OR sim_minute/last_event_id/chunk-count going backwards; tested both ways (same-world restart keeps state and resumes cursor 187400→191403; new world wipes + re-bootstraps). (2) Full governance round-trip verified with the controller's own modules: approval path (intent→sent→approved→applied) and auto-apply PUT (ack carries new version) — no bugs found. (3) Real `/config/history` shape confirmed: list of `{version, actor, changed_dims, applied_at, proposal_id, approval_id}` — reconcile's assumed shape was already correct. (4) Ingest bench with calls.db: **15,116 events/s**, controller-path memory ~250 MB steady / ~640 MB peak per 250k-line chunk (the 4.8 GB first reading was a bench-script artifact — it pre-fetched all 23 chunks; the controller never does).
+- **Files affected**: controller/__main__.py (world_check, --max-ticks, credits in loop_health), scratch/governance_check.py, scratch/ingest_bench.py.
+
+### D013 — Unit of analysis: calls, not persons (stated, not hidden)
+- **Date**: 2026-11-07
+- **Step**: Phase B
+- **DECISION**: Experiments analyse dials (pickup KPI) / connected calls (engagement KPI) as the unit. The sim re-samples the variant on EVERY dial, so arm assignment is not clustered by person. Repeated attempts and returning persons correlate outcomes within arms, inflating variance somewhat; we do not model it, we buffer it (min-n floor 200, Bonferroni, 10pp-first judging) and state it.
+- **ALTERNATIVES**: person-level analysis (first call per person only — throws away ~40% of data in short scenarios); mixed-effects models (defensible but unexplainable in a 60-min review and overkill at these n).
+- **Would change our mind**: an A/A test showing false-winner rate above alpha (measured: 2.1–3.0% over 2000 random splits per workflow — under the 5% bound).
+- **Files affected**: controller/experiments.py (docstring), scratch/aa_test.py.
+
+### D014 — Phase B result and the price of governance hygiene
+- **Date**: 2026-11-07
+- **Step**: Phase B
+- **RESULT**: public_01 with the experiment engine: **4 applied changes — 2 beneficial, 2 neutral, 0 harmful**; nw_kyc pickup +17.9% (caller_id experiment promoted D3 at 80/20); overall conclusion rate +6.2%. Voice experiments on nw_renewal/ks_cancel were still mid-flight at scenario end (min_n ≈460/arm at 15% traffic ≈ 3.3 days + approval latency both ways) — engagement headroom stays uncaptured on an 8-day scenario. That is the documented cost of D009 (audible dims via approval) + D007 (no judgement before min-n); on longer hidden scenarios the same machinery finishes.
+- **Files affected**: reports/phaseB_public_01.md.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_

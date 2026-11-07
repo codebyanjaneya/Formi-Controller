@@ -1,6 +1,6 @@
 # Flow map
 
-Living map of the controller system. Design is frozen in `docs/design.md` (step 8). **Phase A built**: loop, api, store (state.db + calls.db), ingest (15k events/s on public_03), policy, govern (intents/reconcile), detect (external-watch only), why CLI, run.sh. Experiments engine and z-detectors still stubs (Phase B/C). Update this file in the same commit as every change.
+Living map of the controller system. Design is frozen in `docs/design.md` (step 8). **Phase A+B built**: loop, api, store (state.db + calls.db), ingest (15.1k events/s, ~640 MB peak), policy (runtime routes + preferences), govern (intents/reconcile, round-trip verified), detect (external-watch; z-detectors in Phase C), experiments (one-dim champion/challenger 70/30, Bonferroni winner test — A/A false-winner rate 2.1–3.0%, promotion 80/20, decay watch, supervisor-edit invalidation, next_campaign_only handled by config_version filtering), why CLI, run.sh. Update this file in the same commit as every change.
 
 ## (a) Event flow diagram — built (Phase A)
 
