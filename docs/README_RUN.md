@@ -1,5 +1,19 @@
 # Running, testing and operating the controller
 
+## If you only have 5 minutes
+
+```bash
+pip install -r requirements.txt
+python -m sim serve --scenario scenarios/public_01_dev.yaml --run-dir runs/mine01 &   # sim on :8700
+./run.sh http://127.0.0.1:8700          # the controller; runs to scenario end, exit 0
+python -m controller.summary            # what changed, what's testing, what's waiting
+python -m pytest tests/ -q              # 27 tests, <10s
+```
+
+The controller talks to the sim ONLY over HTTP, keeps all state in `./state/`, and survives
+kill -9 at any point (restart it with the same command). `docs/design.md` is the map;
+`docs/decisions.md` (D001–D021) says why everything is the way it is.
+
 Start here if you are new. Everything below works from a fresh clone on Linux/macOS/Windows
 (Git Bash). Python 3.11+ required; no services besides Python and SQLite (file-based).
 
