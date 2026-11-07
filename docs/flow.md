@@ -25,7 +25,10 @@ flowchart LR
 | `controller/detect.py` | baselines, rolling detectors, external watch | called by main |
 | `controller/experiments.py` | experiment lifecycle + winner test + decay watch | called by main |
 | `controller/govern.py` | intents, proposals, auto-apply, apply, reconcile | called by main |
+| `controller/why.py` | CLI: audit queries + per-call `heard` lookup | manual use |
 | `run.sh` | venv + `python -m controller <SIM_URL>` | entry |
+
+Routing rule (D009): welcome_message/voice/prompt_version → ALWAYS approval path; auto-apply only caller_id/schedule where policy allows. Storage: state DB + separate insert-only `calls.db` (per-call variant/cohort/config_version for compliance lookups).
 
 ## (c) Simulator endpoints — observed via HTTP (step 3, public_01_dev)
 

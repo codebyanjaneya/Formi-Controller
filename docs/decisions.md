@@ -102,6 +102,31 @@ Entry format:
 - **Would change our mind**: finishing the build early (C4's hour_weights-only version is the first stretch goal).
 - **Files affected**: docs/design.md §Scope.
 
+### D009 — proposal_id gets an attempt number; customer-audible dims always via approval
+- **Date**: 2026-11-07
+- **Step**: 8b
+- **DECISION**: (1) proposal_id = hash(wid|base_version|diff|kind|attempt); crash-retry keeps the attempt (same id, idempotent), deliberate re-proposal increments it (new id). (2) welcome_message/voice/prompt_version ALWAYS take the approval path; auto-apply only for caller_id/schedule where policy allows.
+- **WHY**: (1) Without attempt, a legitimate re-proposal after expiry/reject is 409-duplicated forever. (2) Compliance wants named approval for anything a customer hears; supervisors want notice; and a 30% split is TV 0.3 > max_shift 0.2 anyway.
+- **ALTERNATIVES**: random ids + sent-flag (rejected again: not crash-atomic); timestamp in the id (rejected: crash would mint a new id → double-send); using auto-apply for voice where policy allows with ≤max_shift splits (rejected: saves one approval but breaks the compliance/notice expectation — and small splits can't host a 30% challenger).
+- **TRADE-OFF**: ~2 approvals per experiment → ≈2 experiments per workflow per 8–10 days. Accepted: governance hygiene scores; harmful-change count scores negatively.
+- **Files affected**: docs/design.md §2, §5.
+
+### D010 — Step-8b answers: 30% challenger, one retry, soft schedule, 20% credit reserve, Python+speed-gate
+- **Date**: 2026-11-07
+- **Step**: 8b
+- **DECISION**: As per design.md "Decided questions" — challenger 30% (10pp in 1–2 days per workflow); one retry on judgement-call rejects with new attempt id, counted in max_requests_per_24h; schedule only as soft weights (no 0-weight hours in window) and only if time allows; credit reserve = 20% of starting credits from /sim/state; Python with an early ≥1400 events/sec ingest benchmark on public_03 (batch per chunk).
+- **ALTERNATIVES**: 20% challenger (slower learning in short scenarios); unlimited retries (approver fatigue + request-cap burn); fixed 40-credit reserve (wrong on hidden budgets); zeroing bad hours in schedule (silently wastes capacity per SIMULATOR.md).
+- **Files affected**: docs/design.md §Decided questions.
+
+### D011 — calls.db per-call record + `heard` CLI; client-preferences caution layer
+- **Date**: 2026-11-07
+- **Step**: 8b
+- **DECISION**: Separate insert-only `calls.db` (one row per call: person, cohort_id, config_version, full variant, outcome) written in the same ingest batch, plus `python -m controller.why heard --person X --day Z` joining it to config_versions+audit. Client-stated preferences not in the API (Kestrel: ≤2 req/day, none before 11:00) become our own configurable caution settings, never looser than policy, logged as an assumption.
+- **WHY**: Constraint §5.6: auditable from OUR store, sim logs don't count — aggregates alone cannot answer "why did person X hear variant Y on day Z". Separate file keeps the hot state DB small.
+- **ALTERNATIVES**: gzip raw chunks + index (rejected: answering one person's question means scanning/decompressing days of NDJSON; also duplicates lead/campaign noise we don't need); per-call rows in the main DB (rejected: bloats the DB the tick loop fsyncs); storing only engaged/flagged calls (rejected: the compliance question is about ANY call).
+- **TRADE-OFF**: ~60–80 MB/day on the load scenario + one more batched insert per chunk.
+- **Files affected**: docs/design.md §2 (calls.db), §Client preferences layer.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_

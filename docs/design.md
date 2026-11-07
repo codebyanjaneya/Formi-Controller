@@ -34,6 +34,7 @@ controller/
   detect.py      baselines + rolling detectors + external-change watch
   experiments.py experiment lifecycle: design, min-n, winner test, decay watch
   govern.py      proposals/auto-apply: build, intent log, send, poll, apply, reconcile
+  why.py         CLI: `why` (audit queries) and `heard` (per-call compliance lookup)
 run.sh           creates venv if needed, installs, exec python -m controller <SIM_URL>
 ```
 
@@ -58,7 +59,11 @@ Production path (written here as required): same design, SQLite → **Postgres**
 | `incidents` | id PK, wid, slice, metric, onset_ts, detected_ts, action_proposal_id, resolved_ts | incident audit (C5/C8) | detect, govern |
 | `audit` | id PK, ts, wid, kind, ref_id, details_json | the queryable "why did X change" store (C12) | all |
 
-`proposal_id` is **deterministic**: `sha256(wid | base_version | canonical_json(diff) | intent-kind)[:32]`. A crash between "intent written" and "send" can only re-send the same id → sim answers `409 duplicate_proposal_id` → we mark it `sent` and move on. No double-apply.
+`proposal_id` is **deterministic with an attempt number**: `sha256(wid | base_version | canonical_json(diff) | intent-kind | attempt)[:32]`. The attempt counter lives in the `intents` row. A crash between "intent written" and "send" re-sends the SAME id (same attempt) → sim answers `409 duplicate_proposal_id` → we mark it `sent` and move on; no double-apply. A deliberate re-proposal after expiry/rejection increments `attempt` → a NEW id, which the sim accepts. Without the attempt number, a legitimate retry would be rejected as a duplicate forever.
+
+### calls.db — per-call compliance record (C12)
+
+Aggregates can't answer Compliance's question *"why did customer X hear variant Y on day Z?"*. So next to the state DB we keep **`calls.db`** (separate SQLite file, WAL, insert-only, written in the same ingest batch): one row per call — `ts, workflow_id, campaign_id, person_id, lead_id, attempt_no, cohort_id, config_version, welcome, voice, caller_id, prompt, connected, engaged, disposition, halluc, adher` — indexed by `(person_id, ts)`. `python -m controller.why heard --person <id> [--day <date>]` joins it with `config_versions` + `audit` and answers: what they heard (variant), why that allocation existed (config version + the proposal/approval or supervisor edit that created it), and who approved it. Separate file so the hot state DB stays small and the audit trail can be archived independently. Cost: ~650k rows/day on the load scenario ≈ 60–80 MB/day — acceptable for a 5-day run.
 
 ## 3. The tick loop, and restart at each step
 
@@ -95,7 +100,8 @@ Transitions we drive: create (`POST /approvals`), apply (`POST .../apply`). Tran
 
 Read per workflow from `GET /workflows/{wid}` every run-day and cache in `workflows`:
 
-- **Route per change**: compute changed dims; if `auto_apply.enabled` AND all dims ⊆ `allowed_dims` AND TV-shift per cohort-dim ≤ `max_shift` → PUT (free, instant). Else → approval path. `prompt_version` is **never** auto-applied by us even if a policy listed it: constraint §5.4 + validation evidence is only checkable by an approver; we treat prompt changes as approval-only with `evidence.validation_run_id` attached (pass_rate ≥ `min_validation_pass_rate`, n sized per step-5 noise finding, ≥200).
+- **Route per change**: **`welcome_message`, `voice` and `prompt_version` ALWAYS go through the approval path**, even where policy would allow auto-apply. Reasons: (a) Northwind compliance wants a named approval for anything a customer hears; (b) the Kestrel supervisor wants advance notice of agent-facing changes; (c) arithmetically, our 30% challenger split is a 0.3 total-variation move — above every observed `max_shift` (0.2–0.5) anyway. Auto-apply (`PUT`) is used ONLY for `caller_id` and `schedule`, only where `auto_apply.enabled` and the dim is in `allowed_dims` and the shift fits `max_shift`. Prompt proposals always carry `evidence.validation_run_id` (pass_rate ≥ `min_validation_pass_rate`, n ≥ 200 per the step-5 noise finding).
+- **Cost of this rule, written down**: each experiment consumes ~2 approvals (start split + promote winner). With `max_requests_per_24h` of 2–4 and approver latencies of hours, that budgets **about 2 experiments per workflow in an 8–10 day scenario**. We accept the slower pace for governance hygiene; the grader scores harmful changes and governance behaviour, not raw change count.
 - **Mid-flight**: if `mid_flight: next_campaign_only`, cohort/allocation changes only affect campaigns created after apply — our experiment clocks start at the **next campaign**, not at apply time; `prompt_version`/`schedule` still act immediately. (nw_kyc-style.)
 - **When to send** (generic timing rule): send a proposal at the start of an `approver_hours` window such that `created_at + max(approver_latency)` still lands inside approver hours and before `expires_at`; set `expires_in_hours = min(policy TTL, hours until approver window closes + buffer)`. Never submit into a closed approver window whose TTL dies before it reopens (the ks_cancel naive bug). Respect `max_requests_per_24h` by batching several dims into one proposal when they're ready together.
 - **Apply fast**: poll approvals every tick; apply inside `apply_window_hours` immediately on approval.
@@ -147,10 +153,22 @@ On `config_changed` with `actor:"supervisor"`:
 - **C11 minimal**: no UI. The "supervisor view" is a handful of documented SQL queries over `audit`/`incidents`/`proposals`. A UI is pure surface area in a 12–16h budget.
 - **C15**: fair cross-tenant credit/attention allocation — with a per-workflow `max_requests_per_24h` already policed by the sim and only ~3–12 workflows in scenarios, a fairness scheduler is speculative; we keep a global credit reserve (open question 4) instead.
 
-## Open questions (max 5)
+## Decided questions (answers approved in step 8b)
 
-1. **Challenger traffic share** — (a) conservative 20% (slower, safer) vs (b) 30% (faster, a bad challenger hurts ~1.5× more). **Recommendation: (b) 30%**, capped by `max_shift` when auto-applying; scenarios are short, speed of learning dominates, and min-n rules bound the damage window.
-2. **Reject ("judgement call") retry** — (a) re-propose once next approver window with improved evidence vs (b) drop the idea. **Recommendation: (a)** — base_reject_rate is 5–15% random; one retry recovers real wins cheaply, a single retry cap avoids approver fatigue.
-3. **Schedule dimension** — (a) leave schedule completely untouched vs (b) allow it ONLY as incident remediation (shift hours away from a degraded window). **Recommendation: (b)**; it's auto-apply-allowed in some policies and costs no test budget, but we don't optimise it proactively (that's cut C4).
-4. **Credit reserve** — (a) hard reserve 40 credits for incidents (validation+suggest cycles ≈ 3+2×2 = 7+ per incident) vs (b) spend freely on proactive validation. **Recommendation: (a)** — running out mid-incident is a named failure mode (README §5.7).
-5. **Language/runtime** — (a) Python (fastest to build, httpx+sqlite3 stdlib, risk: ingest throughput at 850k events/day) vs (b) Go (fast, but slower to write and defend). **Recommendation: (a) Python**, with the load scenario as the gate; ~10 events/ms parsing is enough and aggregates keep memory flat. If it fails the load test, the ingest hot path gets optimised, not rewritten.
+1. **Challenger share = 30%.** Time-to-min-sample at 30% challenger (challenger arm gets 0.3× the daily denominator; step-5 volumes):
+
+   | workflow | primary KPI | denom/day | challenger n/day | days to 10pp (≈380/330) | days to 5pp (≈1550/1250) |
+   |---|---|---|---|---|---|
+   | ks_cancel | engagement | 1159 conn | 348 | 1.1 | 4.5 |
+   | nw_renewal | engagement | 942 conn | 283 | 1.3 | 5.5 |
+   | nw_kyc | pickup | 1944 dials | 583 | 0.6 | 2.1 |
+
+   So: hunt 10pp first (1–2 days), continue to 5pp only when the remaining scenario length allows.
+2. **One retry after a random ("judgement call") reject**, with a NEW attempt id; the retry counts toward `max_requests_per_24h` like any request. Never a second retry.
+3. **Schedule**: "if time allows" only, and only **soft** weights — every hour inside the dialling window keeps weight > 0 (a 0-weight hour silently wastes that hour's capacity per SIMULATOR.md §3). Used for incident remediation when auto-apply permits.
+4. **Credit reserve = 20% of STARTING credits**, read from `/sim/state` at startup (not a fixed number — hidden scenarios may have different budgets). Proactive spending stops at the reserve; incident response may dip into it.
+5. **Python stays**, gated by an EARLY ingest speed test on public_03: target **≥ 1400 events/sec** sustained (850k/day load = ~10/sec real-time equivalent, but we must also catch up backlogs fast; 1400/s processes a full load-day in ~10 min). Technique: aggregate a whole chunk in memory, then write one batched transaction.
+
+## Client preferences layer (our own caution settings — ASSUMPTION, written down)
+
+Some stakeholder requests are not in the policy API (the Kestrel supervisor asked for **max 2 requests/day** and **no proposals before 11:00**). The API's own `governance` block stays the hard law; these extra wishes become a small config dict in our controller, e.g. `{"ks_*": {"max_requests_per_day": 2, "earliest_proposal_hour": 11}}` — **defaults, configurable, and NEVER looser than the policy API** (we take the minimum of ours and the API's). Assumption to state in SUBMISSION.md: client-stated preferences that the platform doesn't encode are honoured voluntarily by the controller and must be auditable (`audit` rows say when a proposal was delayed by preference, not policy).
