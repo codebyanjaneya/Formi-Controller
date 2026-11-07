@@ -28,16 +28,10 @@ from . import policy as pol
 
 log = logging.getLogger("detect")
 
-Z_THR = 3.0
-EFFECT_FLOOR = 0.03
-MIN_N = 300
-MIN_POS = 5          # for rare-event metrics (halluc)
-PERSIST = 2          # consecutive ticks
-COOLDOWN_H = 24
-WINDOW_H = 4
-DRIFT_WINDOW_H = 24
-VALIDATION_N = 200
-VERIFY_AFTER_H = 12
+from .tuning import (Z_THR, EFFECT_FLOOR, MIN_N, MIN_POS, PERSIST, COOLDOWN_H, WINDOW_H,
+                     DRIFT_WINDOW_H, VALIDATION_N, VERIFY_AFTER_H, RECALIB_H, RECALIB_CLAMP,
+                     ROTATE_SLICE_MARGIN, ROTATE_MAX_SLICE_SHARE, ROTATE_HEALTHY_MIN_DIALS,
+                     MAX_AUTO_PER_DAY, CREDIT_RESERVE_FRAC)
 
 
 # ---------- series ----------
@@ -69,7 +63,7 @@ def recalibrate(store, now: str, nowdt):
     can sit a few pp off the live world (seen on both public scenarios). Scale each series'
     baseline by observed/expected over the last 72h, clamped to [0.85, 1.15], skipping series
     with an open incident so real degradations are never absorbed into the baseline."""
-    since = (nowdt - timedelta(hours=72)).isoformat()[:13]
+    since = (nowdt - timedelta(hours=RECALIB_H)).isoformat()[:13]
     for wid in pol.all_wids(store):
         policy_w = pol.get(store, wid)
         for metric, slice_, cid in _series_list(store, wid, policy_w):
@@ -90,7 +84,7 @@ def recalibrate(store, now: str, nowdt):
                 exp += b[0] * den
             if n < 2 * MIN_N or exp <= 0:
                 continue
-            factor = max(0.85, min(1.15, x / exp))
+            factor = max(RECALIB_CLAMP[0], min(RECALIB_CLAMP[1], x / exp))
             store.db.execute("INSERT OR REPLACE INTO baseline_scale(wid,metric,slice,factor,"
                              "updated_ts) VALUES(?,?,?,?,?)", (wid, metric, slice_, factor, now))
     store.db.commit()
@@ -218,12 +212,12 @@ def _remediate(api, store, wid, policy_w, incident_id, metric, slice_, cid, r, n
         since = (nowdt - timedelta(hours=WINDOW_H)).isoformat()[:13]
         r_all = _zscore(store, wid, "pickup", "all", _window_counts(store, wid, since))
         all_n = r_all["n"] if r_all else 0
-        if r_all and r["effect"] - r_all["effect"] > -0.02:
+        if r_all and r["effect"] - r_all["effect"] > -ROTATE_SLICE_MARGIN:
             store.audit(now, wid, "incident_no_action", f"inc{incident_id}",
                         {"reason": "slice not clearly worse than aggregate",
                          "slice_effect": r["effect"], "aggregate_effect": r_all["effect"]})
             return
-        if all_n and r["n"] / all_n > 0.85:
+        if all_n and r["n"] / all_n > ROTATE_MAX_SLICE_SHARE:
             store.audit(now, wid, "incident_no_action", f"inc{incident_id}",
                         {"reason": "slice carries nearly all traffic; rotating it cannot be "
                                    "justified against the aggregate", "share": r["n"] / all_n})
@@ -254,9 +248,9 @@ def _rotate_caller_id(api, store, wid, policy_w, incident_id, bad_cid, r, now):
     day_autos = store.db.execute(
         "SELECT COUNT(*) FROM intents WHERE wid=? AND kind='auto' AND created_ts>=?",
         (wid, (datetime.fromisoformat(now) - timedelta(hours=24)).isoformat())).fetchone()[0]
-    if day_autos >= 8:
+    if day_autos >= MAX_AUTO_PER_DAY:
         store.audit(now, wid, "incident_no_action", f"inc{incident_id}",
-                    {"reason": "auto-apply rate limit reached (8/24h)"})
+                    {"reason": f"auto-apply rate limit reached ({MAX_AUTO_PER_DAY}/24h)"})
         return
     # target must be PROVEN healthy: enough recent traffic and clearly better pickup than
     # the degraded option — rotating onto an option with no data caused a ping-pong storm
@@ -265,7 +259,7 @@ def _rotate_caller_id(api, store, wid, policy_w, incident_id, bad_cid, r, now):
     rows = store.db.execute(
         "SELECT caller_id, SUM(dials), SUM(connected) FROM agg_calls WHERE wid=? AND hour_ts>=?"
         " GROUP BY caller_id", (wid, since)).fetchall()
-    rates = {c: (co / d) for c, d, co in rows if c != bad_cid and d and d >= 200}
+    rates = {c: (co / d) for c, d, co in rows if c != bad_cid and d and d >= ROTATE_HEALTHY_MIN_DIALS}
     healthy = {c: rt for c, rt in rates.items() if rt >= r["observed"] + EFFECT_FLOOR}
     if not healthy:
         store.audit(now, wid, "incident_no_action", f"inc{incident_id}",
@@ -351,7 +345,7 @@ def _prompt_pipeline(api, store, wid, policy_w, incident_id, r, now):
         prev_prompt = prev[0]
 
     creds = api.state().get("credits_remaining", 0)
-    reserve = 0.2 * float(store.get_meta("starting_credits", 0))  # D010: 20% of starting
+    reserve = CREDIT_RESERVE_FRAC * float(store.get_meta("starting_credits", 0))  # D010
     candidates = []
     if prev_prompt:
         candidates.append(prev_prompt)

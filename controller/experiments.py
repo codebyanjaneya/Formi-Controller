@@ -26,10 +26,9 @@ from . import policy as pol
 log = logging.getLogger("experiments")
 
 DIM_COL = {"welcome_message": "welcome", "voice": "voice", "caller_id": "caller_id"}
-CHAMPION_SHARE, PROMOTE_SHARE = 0.7, 0.8
-ALPHA = 0.05
-LOOKS = 2  # sequential looks: at min-n(10pp) and min-n(5pp); alpha split across looks (D015)
-MIN_N_FLOOR = 200
+from .tuning import (CHAMPION_SHARE, CHALLENGER_TOTAL, PROMOTE_SHARE, ALPHA, LOOKS,
+                     MIN_N_FLOOR, HARM_FLOOR, EXP_NEED_DAYS, DECAY_WINDOW_H,
+                     DECAY_MIN_RESIDUAL)
 ACTIVE = ("split_proposed", "running", "promote_proposed", "promoted", "rollback_proposed")
 
 
@@ -107,15 +106,23 @@ def arm_counts(store, wid: str, versions: list[int], dim: str) -> dict[str, tupl
     return {r[0]: (r[1], r[2], r[3]) for r in rows}
 
 
-def dim_for(policy_w: dict, store, wid: str) -> str | None:
-    """Next untested dimension for this workflow, driven by its primary KPI."""
+def dim_for(policy_w: dict, store, wid: str) -> tuple[str, int] | None:
+    """Next dimension to test (with attempt number), driven by the primary KPI.
+    A rejected/expired/invalidated experiment does NOT permanently block its dimension:
+    it gets ONE fresh retry (D010) with a new attempt id."""
     primary, _, _ = kpi_parts(policy_w.get("objective", {}))
     candidates = ["caller_id"] if primary == "pickup" else ["voice", "welcome_message"]
-    done = {r[0] for r in store.db.execute(
-        "SELECT dimension FROM experiments WHERE wid=?", (wid,)).fetchall()}
     for d in candidates:
-        if d not in done and len(policy_w.get("options", {}).get(d, [])) >= 2:
-            return d
+        if len(policy_w.get("options", {}).get(d, [])) < 2:
+            continue
+        rows = [r[0] for r in store.db.execute(
+            "SELECT status FROM experiments WHERE wid=? AND dimension=?", (wid, d)).fetchall()]
+        if any(s not in ("failed", "invalid") for s in rows):
+            continue  # concluded or still active on this dim
+        retries = len(rows)
+        if retries >= 2:
+            continue  # one retry only
+        return d, retries + 1
     return None
 
 
@@ -226,9 +233,10 @@ def _step_wf(api, store, wid: str, policy_w: dict, now: str, state: dict):
         return
 
     # no active experiment: start one if gates allow and enough scenario time remains
-    dim = dim_for(policy_w, store, wid)
-    if not dim or not _gates_ok(api, store, policy_w, wid, now, state, need_days=2):
+    pick = dim_for(policy_w, store, wid)
+    if not pick or not _gates_ok(api, store, policy_w, wid, now, state, need_days=EXP_NEED_DAYS):
         return
+    dim, attempt = pick
     cfg, alloc, version = current_alloc(api, wid, dim)
     options = policy_w["options"][dim]
     if not alloc:
@@ -239,8 +247,8 @@ def _step_wf(api, store, wid: str, policy_w: dict, now: str, state: dict):
     challengers = [o for o in options if o != champion]
     if not challengers:
         return
-    share = 0.3 / len(challengers)  # 30% TOTAL challenger traffic, split evenly
-    new_alloc = {champion: CHAMPION_SHARE, **{c: round(share, 3) for c in challengers}}
+    share = CHALLENGER_TOTAL / len(challengers)  # split evenly
+    new_alloc = {champion: round(1 - CHALLENGER_TOTAL, 3), **{c: round(share, 3) for c in challengers}}
     rates = recent_option_rates(store, wid, dim, now)
     base_rate = (rates.get(champion, {}) or {}).get(primary) or 0.5
     min_n = n_per_arm(base_rate, 0.10, ALPHA / (len(challengers) * LOOKS))
@@ -256,7 +264,7 @@ def _step_wf(api, store, wid: str, policy_w: dict, now: str, state: dict):
                        "this is exploration, expected impact under the null is 0"}
     with store.db:
         pid = _queue_change(api, store, policy_w, wid, now, dim, new_alloc, alloc, cfg, version,
-                            summary, rationale, round(0.3 * 0.1, 3), dry_run)
+                            summary, rationale, round(CHALLENGER_TOTAL * 0.1, 3), dry_run, attempt=attempt)
         store.db.execute(
             "INSERT INTO experiments(exp_id,wid,dimension,cohort,arms,start_version,status,"
             "started_ts,notes) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -347,16 +355,21 @@ def _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, gmetric
     if verdict:
         g = {o: metric_nd(gmetric, *counts.get(o, (0, 0, 0))) for o in (champion, verdict["winner"])}
         geff, gp = ztest(*g[verdict["winner"]], *g[champion])
-        guard_ok = (geff > -gdrop) and not (geff < 0 and gp < 0.05)
+        # Guardrail blocks only on evidence of a drop BEYOND the policy's max_drop:
+        # significant breach of the limit, or a point estimate at 2x the limit. "Any
+        # statistically significant drop" blocked a true +13pp winner on noise at small
+        # guardrail-n and the forced revert was graded harmful (D019).
+        guard_ok = not ((geff < -gdrop and gp < 0.05) or geff < -2 * gdrop)
         if not guard_ok:
+            # keep the bounded split (its risk was already accepted); do NOT promote and
+            # do NOT revert — the split's primary-KPI gains stay, harm branch still guards it
             with store.db:
                 store.db.execute("UPDATE experiments SET status='done', decided_ts=?, winner=NULL,"
                                  " notes=? WHERE exp_id=?",
                                  (now, json.dumps(notes | {"guardrail_blocked": verdict}), exp_id))
                 store.audit(now, wid, "experiment_guardrail_block", exp_id,
                             {"verdict": verdict, "guardrail_effect": geff, "p": gp,
-                             "max_drop": gdrop})
-            _revert(api, store, policy_w, wid, dim, notes, now, "guardrail block")
+                             "max_drop": gdrop, "action": "keep split, no promotion"})
             return
         if _gates_ok(api, store, policy_w, wid, now, state):
             _promote(api, store, policy_w, wid, exp_id, dim, arms, notes, verdict,
@@ -367,7 +380,7 @@ def _judge(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, gmetric
     for c in challengers:
         x, n = prim[c]
         eff, p = ztest(x, n, cx, cn)
-        if eff < -0.03 and p < ALPHA / (LOOKS * k):
+        if eff < -HARM_FLOOR and p < ALPHA / (LOOKS * k):
             harm = {"challenger": c, "effect": eff, "p": p}
             break
     if not harm and look == 0:
@@ -428,7 +441,7 @@ def _decay_watch(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, n
     winner = notes.get("promoted_winner")
     residual = arms["champion"]
     ver = notes.get("active_version")
-    since = (datetime.fromisoformat(now) - timedelta(hours=48)).isoformat()[:13]
+    since = (datetime.fromisoformat(now) - timedelta(hours=DECAY_WINDOW_H)).isoformat()[:13]
     col = DIM_COL[dim]
     rows = store.db.execute(
         f"SELECT {col}, SUM(dials), SUM(connected), SUM(engaged) FROM agg_calls "
@@ -437,10 +450,10 @@ def _decay_watch(api, store, wid, policy_w, exp_id, dim, arms, notes, primary, n
     c = {r[0]: (r[1], r[2], r[3]) for r in rows}
     wnd = metric_nd(primary, *c.get(winner, (0, 0, 0)))
     rnd = metric_nd(primary, *c.get(residual, (0, 0, 0)))
-    if wnd[1] < MIN_N_FLOOR or rnd[1] < 100:
+    if wnd[1] < MIN_N_FLOOR or rnd[1] < DECAY_MIN_RESIDUAL:
         return
     eff, p = ztest(*wnd, *rnd)
-    if eff < -0.03 and p < 0.05 and _gates_ok(api, store, policy_w, wid, now, state):
+    if eff < -HARM_FLOOR and p < 0.05 and _gates_ok(api, store, policy_w, wid, now, state):
         cfg, alloc, version = current_alloc(api, wid, dim)
         new_alloc = {residual: PROMOTE_SHARE, winner: round(1 - PROMOTE_SHARE, 3)}
         summary = f"Roll back {dim}={winner}: decayed, now {eff*100:+.1f}pp {primary} vs {residual}"

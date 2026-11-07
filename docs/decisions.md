@@ -171,6 +171,22 @@ Entry format:
 - **RESULT**: **7 applied — 5 beneficial, 2 neutral, 0 harmful**; ALL conclusion +5.5%, ks_cancel +14.3%; engagement gap captured 16% overall (ks_cancel 31%); hallucinated calls 152 vs 416 baseline. Caller-ID incident: onset 10:00 → alarm + first auto-rotation 11:00 → rotation complete 11:30; flagged-DID share 0 from the next day. Bad-prompt incident: grader MTTR 315 min (edit 11:30 → halluc alarm + validated proposal 15:30 → applied 16:45; validation P1 pass_rate 0.985, n=200). Supervisor voice edit: detected via event, experiment invalidated, correctly NO counter-action (no KPI effect). Credits used 5/200.
 - **Files affected**: reports/phaseC_public_02.md.
 
+### D018 — All tuning constants in controller/tuning.py, each with its reason
+- **Date**: 2026-11-07
+- **Step**: Phase D prep (genericness audit)
+- **DECISION**: Every threshold we own (z=3, 3pp floor, n≥300, ≥5 positives, 2-tick persistence, 24h cooldown, 4h/24h windows, 72h recalibration with [0.85,1.15] clamp, rotation rails 2pp/85%/200-dials/8-per-day, validation n=200, 20% credit reserve, 70/30 and 80/20 shares, alpha 0.05, 2 looks) lives in one file with a one-line reason each. Grep audit confirmed: no workflow ids, tenant names, option names or scenario dates anywhere in controller/ (exceptions: the `ks_`-prefix client-preference entry — a documented voluntary-caution assumption, D011 — and docstring examples in why.py).
+- **WHY**: Hidden scenarios share only the schema; anything scenario-shaped in code is disqualifying. One file also makes the 60-min review's "change a constraint" question answerable by pointing at a line.
+- **Files affected**: controller/tuning.py, controller/detect.py, controller/experiments.py.
+
+### D019 — Guardrail test bounded by policy max_drop; no revert on guardrail block; retry actually retries
+- **Date**: 2026-11-07
+- **Step**: Phase D prep (public_01 regression)
+- **PROBLEM FOUND**: rerunning public_01 produced 1 harmful change: the caller_id experiment found a true +13.2pp pickup winner (p=8e-9), but the guardrail check blocked promotion on ANY statistically significant engagement drop (a noise-level drop at n≈166), and `_revert` then threw away the measured-beneficial 70/15/15 split (didΔ −0.088 → harmful). Also found: D010's one-retry-after-reject never fired — a failed experiment permanently blocked its dimension (nw_kyc in public_02 sat idle after one random rejection).
+- **FIX**: (1) guardrail blocks only on evidence the POLICY limit is breached: (drop > max_drop AND significant) OR drop > 2×max_drop. (2) On a guardrail block, keep the bounded split (no promotion, no revert) — its risk was accepted at start and the harm branch still protects it. (3) `dim_for` now returns (dim, attempt): failed/invalid experiments allow ONE fresh retry with a new attempt id.
+- **RESULT**: public_01 rerun: 4 changes — 1 beneficial, 3 neutral, **0 harmful**; nw_kyc conclusion +19.0%.
+- **ALTERNATIVES**: keeping strict any-significant-drop blocking (rejected: measured false block); promoting winners despite guardrail signal (rejected: policy limit is law).
+- **Files affected**: controller/experiments.py, reports/phaseD_public_01.md.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_
