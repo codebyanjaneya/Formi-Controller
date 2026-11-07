@@ -52,6 +52,17 @@ Entry format:
 - **Would change our mind**: live data contradicting a history prior at scale, or a scenario with much higher volumes.
 - **Files affected**: docs/analysis_step5.md, scratch/fetch_history.py, scratch/analyze_history.py.
 
+### D004 — Incident detection: event-driven first, sliced z-detector second
+- **Date**: 2026-11-07
+- **Step**: 6 (incident observation, see docs/analysis_step6.md)
+- **DECISION**: Detect external/incident conditions with (1) `config_changed` actor≠controller as a hard signal with stat-reset, and (2) a rolling ~4h sliced z-detector (per workflow × dimension value) gated by hour-matched baselines, |z|≥3 AND effect ≥ max(3pp, 3×daily sd), n≥300 and ≥5 positives for rare metrics, plus a 24h slow-drift backstop.
+- **WHY**: Measured on public_02: slice signal (−16.7pp) is 2× the aggregate; 4h window caught both measurable incidents in ≤2h; z-only detectors false-alarmed daily (afternoon pickup dip, 2pp baseline offsets, small-n halluc spikes). One supervisor edit had NO KPI signature — only the event reveals it.
+- **HOW**: Rules written generically in analysis_step6.md §Generic detection rules; detector simulation code in scratch/analyze_probe03.py.
+- **ALTERNATIVES**: 1h windows (too many false alarms); 24h-only (2–4h extra lag, flags trivial offsets); KPI-only detection without events (misses silent edits, cannot distinguish our changes from external ones).
+- **TRADE-OFF**: 4h lag means ~a few hundred degraded calls before remediation; hour-matched baselines need history preprocessing.
+- **Would change our mind**: a scenario whose history window is unrepresentative (then bootstrap baselines from the first live day(s)).
+- **Files affected**: docs/analysis_step6.md, scratch/observe_run.py, scratch/analyze_probe03.py.
+
 ## Things we deliberately cut
 
 _(none yet — planned)_

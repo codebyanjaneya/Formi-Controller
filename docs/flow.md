@@ -41,7 +41,8 @@ Controller modules not built yet, so "Called by" is planned. Observed behaviour 
 ### Observed event types (beyond lead/call/campaign_created)
 
 - `approval_decided` — `{approval_id, workflow_id, status: approved|rejected, reasons, ts}`; verified for BOTH approved and rejected cases (step 5); decision also visible by polling `GET /approvals/{aid}`.
-- `config_changed` — `{workflow_id, version, actor, changed_dims, proposal_id, approval_id, ts}` emitted on apply.
+- `config_changed` — `{workflow_id, version, actor, changed_dims, proposal_id, approval_id, ts}` emitted on apply. Also fires for EXTERNAL changes: `actor:"supervisor"` with null proposal/approval ids (step 6) — the controller's only reliable signal for supervisor edits.
+- `call.qa` — `{hallucination_flag, flow_adherence}` on connected calls; baseline halluc rate ~1.3–1.7% (imperfect detector), flow_adherence mean ~0.93 (step 6).
 
 ### Error shapes observed
 
