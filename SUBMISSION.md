@@ -6,7 +6,7 @@
 
 ## 0. TL;DR
 
-A single-process, 15-minute-tick controller: ingest → detect → decide → act, all state keyed by workflow_id, every outbound change through an intent log with deterministic ids. public_01: **+4.9% conclusion rate, 0 harmful changes**. public_02: **+9.9% conclusion, hallucinated calls 416→191, caller-ID rotated out in ~1.5h, bad-prompt MTTR 225 min, 1 harmful change (−1.8pp, below our 3pp floor)**. Deliberately not built: per-person call-time optimisation (C4), a UI (C11 is a CLI), cross-tenant fairness (C15), full pre-D0 bootstrap (C3 beyond baselines/priors).
+A single-process, 15-minute-tick controller: ingest → detect → decide → act, all state keyed by workflow_id, every outbound change through an intent log with deterministic ids. public_01: **+4.9% conclusion rate, 0 harmful changes**. public_02: **+9.9% conclusion, hallucinated calls 416→191, caller-ID rotated out in ~1.5h, bad-prompt MTTR 225 min, 1 harmful change (−1.8pp, below our 3pp floor)**. public_03 (12 workflows at load): **+8.6% conclusion, 27 changes, 0 harmful**. Deliberately not built: per-person call-time optimisation (C4), a UI (C11 is a CLI), cross-tenant fairness (C15), full pre-D0 bootstrap (C3 beyond baselines/priors).
 
 ## 1. Assumptions
 
@@ -142,6 +142,8 @@ That answers "why did ks_cancel change at 16:45 on D3, who approved it, what hap
 **public_01 (reports/public_01.md):** ALL conclusion +4.9%, pickup +3.1%, engagement +1.5%; 4 changes — 1 beneficial (nw_kyc caller-ID split, didΔ +0.152), 3 neutral, **0 harmful**; credits 0. Interpretation: the caller-ID experiment found D3-heavy traffic was better and the guardrail correctly kept the split rather than over-promoting; voice experiments were still mid-evidence at day 8 — the honest cost of approval-path governance + minimum samples on an 8-day scenario.
 
 **public_02 (reports/public_02.md):** ALL conclusion +9.9%, pickup +6.8%, engagement +1.8%, engagement gap captured 13% (ks_cancel 32%); hallucinated calls 191 vs 416 baseline; 10 changes — 6 beneficial, 3 neutral, **1 harmful**: nw_renewal v4 voice promotion, true effect −1.8pp engagement. Why: a false winner inside our measured 1–4% A/A budget, and −1.8pp sits below our 3pp decay/rollback floor, so it persisted. What I'd change: a post-promotion "confirmation look" on the residual comparison at ~5 days would catch sub-floor false winners on longer scenarios; on 8-day scenarios the honest fix is accepting the 1–4% × sub-floor risk and saying so.
+
+**public_03 (reports/public_03.md, 12 workflows at load):** ALL conclusion +8.6%, pickup +4.6%, engagement +2.4%, gap captured 11% (cancel workflows 26–28%); **27 changes — 15 beneficial, 12 neutral, 0 harmful**; every one of the 12 workflows positive on conclusions. The same machinery, unchanged, scaled from 3 workflows to 12.
 
 ## 12. Trade-offs & rejected alternatives (full log: docs/decisions.md D001–D021)
 
