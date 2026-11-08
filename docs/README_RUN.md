@@ -71,7 +71,9 @@ Measured: ~1.3 min per simulated day, ~11.3k events/s end-to-end, 801 MB peak
 | `python -m controller.summary [--day D]` | per workflow: changes (actor/dims/reason/route), running experiments, approver queue, incidents |
 | `python -m controller.health [--url SIM]` | ingest lag, decisions/day, credit burn, open incidents, stuck proposals + page-on vs dashboard-only |
 
-All CLIs take `--state-dir` (default `state`).
+All CLIs take `--state-dir` (default `state`). Note: at the end of a run `controller.health`
+may list open no-action pickup incidents (observations with a written reason, nothing to do);
+only open hallucination incidents page.
 
 ## Where things live
 

@@ -128,6 +128,8 @@ Measured (reports/load_public_03.md, python:3.11 container, --cpus=4 --memory=8g
 
 ## 10. Audit & observability
 
+(trimmed example of real output)
+
 ```
 $ python -m controller.why why --workflow ks_cancel --since 2027-01-07
 2027-01-07T11:45  external_change_handled   {"actor":"supervisor","changed_dims":["prompt_version"]}
@@ -145,6 +147,8 @@ That answers "why did ks_cancel change at 16:45 on D3, who approved it, what hap
 **public_01 (reports/public_01.md):** ALL conclusion +4.9%, pickup +3.1%, engagement +1.5%; 4 changes — 1 beneficial (nw_kyc caller-ID split, didΔ +0.152), 3 neutral, **0 harmful**; credits 0. Interpretation: the caller-ID experiment found D3-heavy traffic was better and the guardrail correctly kept the split rather than over-promoting; voice experiments were still mid-evidence at day 8 — the honest cost of approval-path governance + minimum samples on an 8-day scenario.
 
 **public_02 (reports/public_02.md):** ALL conclusion +9.9%, pickup +6.8%, engagement +1.8%, engagement gap captured 13% (ks_cancel 32%); hallucinated calls 191 vs 416 baseline; 10 changes — 6 beneficial, 3 neutral, **1 harmful**: nw_renewal v4, true effect −1.8pp engagement. The audit trail shows exactly what it was: NOT a promotion and NOT mixed data — after the supervisor's deliberate voice edit (v3, V2 at 100%) invalidated our running experiment (correctly, within one tick), the engine started a FRESH voice experiment the next morning on the new base, moving 30% of traffic off the supervisor's choice. The evidence that this cost something is the **grader's hidden-truth tag on v4 (engageΔ −0.018 at apply time)** — our own arm data was underpowered and did not identify a best voice either way (exp-1: V1 0.551 vs V2 0.543; exp-2 interim: V3 0.591 on n=367). So this is the ordinary price of exploration, paid at an unlucky moment; the lighter production mitigation is in §12.
+
+**Run-to-run variance (honest note):** Numbers above are from one run. The simulator is not bit-reproducible across machines (even the no-op baseline differed slightly). An independent rerun on a Linux box gave public_01 ALL +5.3% (0 harmful) and public_02 ALL +6.8% (1 harmful, again a nw_renewal voice change, engageDelta -0.018; nw_renewal conclusion -9.2% vs baseline in that run). Expect roughly ±3pp run-to-run on the headline numbers.
 
 **public_03 (reports/public_03.md, 12 workflows at load):** ALL conclusion +8.6%, pickup +4.6%, engagement +2.4%, gap captured 11% (cancel workflows 26–28%); **27 changes — 15 beneficial, 12 neutral, 0 harmful**; every one of the 12 workflows positive on conclusions. The same machinery, unchanged, scaled from 3 workflows to 12.
 
@@ -173,6 +177,7 @@ That answers "why did ks_cancel change at 16:45 on D3, who approved it, what hap
 5. **Thresholds tuned on two public scenarios:** the rules are baseline-relative by construction, but z=3/3pp/n≥300 were validated against public_01/02 failure modes only.
 6. **Call-level independence assumption:** returning persons correlate outcomes within arms; variance is understated by an unmodelled amount (D013).
 7. **Cut capabilities:** per-person/per-cohort call-time optimisation (C4) and cross-tenant fairness (C15) are real headroom left on the table, by choice.
+8. **Run-to-run variance:** the reported numbers are single runs; the simulator is not bit-reproducible across machines. An independent Linux rerun landed at public_01 +5.3% / public_02 +6.8% (same harmful-change signature); treat headline numbers as ±3pp.
 
 ## 14. If this went to production at Formi next month
 
