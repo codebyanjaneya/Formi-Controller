@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** Anjaneya Tiwari · **Date:** 2026-11-07 · **Hours actually spent (be honest):** `<FILL IN HONESTLY>` · **Language / storage:** Python 3.11+ / SQLite (WAL), two files: `state.db` (loop state) + `calls.db` (per-call audit)
+**Name:** Anjaneya Tiwari · **Date:** 2026-11-07 · **Hours actually spent (be honest):** ~11 hours total across 3 days (Nov 6 to 8). Part of that was Claude Code running while I reviewed its output and made the design decisions. AI tools were used throughout; I reviewed each step and decided the scope and trade-offs. · **Language / storage:** Python 3.11+ / SQLite (WAL), two files: `state.db` (loop state) + `calls.db` (per-call audit)
 
 ---
 
